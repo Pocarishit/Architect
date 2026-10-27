@@ -51,6 +51,16 @@ body.is-board .outlet { position: fixed; inset: 0; }
 .el-txt.is-bold { font-weight: 700; }
 .el-txt.f-dot.is-bold { font-weight: 900; }
 .el-txt.is-italic { font-style: italic; }
+.el-txt.f-noto { font-family: 'Noto Sans', var(--f-sans); }
+.el-txt.f-serif { font-family: 'Instrument Serif', Georgia, serif; letter-spacing: 0; }
+.el-txt.f-hand { font-family: 'Caveat', 'Comic Sans MS', cursive; line-height: 1.15; }
+.el-txt.is-underline { text-decoration: underline; text-underline-offset: .12em; }
+.el-txt.is-strike { text-decoration: line-through; }
+.el-txt.is-underline.is-strike { text-decoration: underline line-through; }
+.el-txt a { color: inherit; text-decoration: underline; text-underline-offset: .14em; text-decoration-thickness: .06em; cursor: pointer; }
+.el-txt ul, .el-txt ol { margin: 0; padding-left: 1.25em; text-align: left; }
+.el-txt li { margin: .1em 0; }
+.el-txt span[style*="background"] { border-radius: .12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .el-txt[contenteditable="true"] { user-select: text; -webkit-user-select: text; cursor: text; caret-color: currentColor; }
 .el-txt[contenteditable="true"]:empty::before { content: attr(data-ph); opacity: .4; pointer-events: none; }
 
@@ -183,13 +193,12 @@ body.bp-busy .el.is-live .el-media { pointer-events: none; }
 .ov-pt.is-bound { background: var(--sel); }
 .ov-pt::after { content: ''; position: absolute; inset: calc(-7px * var(--iz)); }
 .ov-qc {
-  width: calc(20px * var(--iz)); height: calc(20px * var(--iz)); transform: translate(-50%, -50%);
-  display: grid; place-items: center; border-radius: 50%;
-  background: var(--s1); color: var(--fg-2); border: calc(1px * var(--iz)) solid var(--line-2);
-  pointer-events: auto; cursor: pointer; opacity: .85; transition: opacity .12s, background-color .12s, color .12s;
+  width: calc(11px * var(--iz)); height: calc(11px * var(--iz)); transform: translate(-50%, -50%);
+  border-radius: 50%; background: var(--paper); border: calc(1.5px * var(--iz)) solid var(--sel);
+  pointer-events: auto; cursor: crosshair; transition: transform .12s var(--ease), background-color .12s;
 }
-.ov-qc .ic { width: calc(12px * var(--iz)); height: calc(12px * var(--iz)); }
-.ov-qc:hover { opacity: 1; background: var(--sel); color: var(--paper); border-color: var(--sel); }
+.ov-qc::after { content: ''; position: absolute; inset: calc(-8px * var(--iz)); border-radius: 50%; }
+.ov-qc:hover { background: var(--sel); transform: translate(-50%, -50%) scale(1.4); }
 .ov-lock {
   width: calc(22px * var(--iz)); height: calc(22px * var(--iz)); transform: translate(-50%, -50%);
   display: grid; place-items: center; border-radius: 50%; background: var(--sel); color: var(--paper);
@@ -375,3 +384,26 @@ body.bp-busy .el.is-live .el-media { pointer-events: none; }
   .bp-title { max-width: 38vw; }
   .hide-sm { display: none; }
 }
+
+/* ---------- Text toolbar ---------- */
+.ff-sans { font-family: var(--f-sans); }
+.ff-noto { font-family: 'Noto Sans', var(--f-sans); }
+.ff-mono { font-family: var(--f-mono); }
+.ff-dot { font-family: var(--f-dot); font-weight: 700; }
+.ff-serif { font-family: 'Instrument Serif', Georgia, serif; font-size: 1.1em; }
+.ff-hand { font-family: 'Caveat', cursive; font-size: 1.2em; }
+.ctx-btn.ctx-wide { padding: 0 10px; }
+.ctx-font { font-size: 13px; color: var(--fg); white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.ctx-sizebox { display: inline-flex; align-items: center; height: 34px; border-radius: 10px; padding-left: 2px; }
+.ctx-sizebox:hover, .ctx-sizebox:focus-within { background: var(--s3); }
+.ctx-size {
+  width: 40px; height: 30px; border: 0; background: transparent; text-align: center;
+  font-family: var(--f-mono); font-size: 12px; color: var(--fg); border-radius: 7px; outline: none;
+}
+.ctx-size:focus { box-shadow: inset 0 0 0 1px var(--fg); }
+.ctx-steps { display: grid; }
+.ctx-step { width: 20px; height: 15px; display: grid; place-items: center; color: var(--fg-2); border-radius: 4px; }
+.ctx-step:hover { color: var(--fg); background: var(--line-2); }
+.ctx-tc { position: relative; display: grid; place-items: center; }
+.ctx-tc i { position: absolute; left: 3px; right: 3px; bottom: -1px; height: 3px; border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 20%, transparent); }
+.menu .menu-label.ff-serif, .menu .menu-label.ff-hand { line-height: 1.1; }
