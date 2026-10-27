@@ -62,7 +62,7 @@ body.is-board .outlet { position: fixed; inset: 0; }
 .el-txt li { margin: .1em 0; }
 .el-txt span[style*="background"] { border-radius: .12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .el-txt[contenteditable="true"] { user-select: text; -webkit-user-select: text; cursor: text; caret-color: currentColor; }
-.el-txt[contenteditable="true"]:empty::before { content: attr(data-ph); opacity: .4; pointer-events: none; }
+.el-txt[contenteditable="true"]:empty::before { content: attr(data-ph); opacity: .4; pointer-events: none; white-space: nowrap; }
 
 .el-sticky {
   display: flex;

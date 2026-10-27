@@ -37,7 +37,9 @@ export class Editor {
   constructor(host, { elements = [], camera = null, mediaUrl = () => null } = {}) {
     this.host = host;
     this.mediaUrl = mediaUrl;
-    this.els = (elements || []).filter((e) => e && e.id && e.type);
+    this.els = (elements || []).filter((e) => e && e.id && e.type)
+      // Repair text boxes saved too narrow (older versions): let them hug their words again.
+      .map((e) => (e.type === 'text' && !e.autoW && e.w < 60 ? { ...e, autoW: true } : e));
     this.byId = new Map(this.els.map((e) => [e.id, e]));
     this.sel = new Set();
     this.tool = 'select';
@@ -754,12 +756,14 @@ export class Editor {
       type: 'create', pointerId: start.pointerId,
       onMove: (p, e) => {
         if (!made && Math.hypot(e.clientX - start.cx, e.clientY - start.cy) < 6) return;
+        // Text: a small wobble while clicking is still a click; only a real sideways drag sets a wrap width.
+        if (!made && type === 'text' && Math.abs(e.clientX - start.cx) < 40) return;
         let r = rectFromPoints(start.p, p);
         if (type === 'sticky' || e.shiftKey) {
           const s2 = Math.max(r.w, r.h);
           r = { x: p.x < start.p.x ? start.p.x - s2 : start.p.x, y: p.y < start.p.y ? start.p.y - s2 : start.p.y, w: s2, h: s2 };
         }
-        if (type === 'text') r.h = made?.h || DEFAULTS.text.h;
+        if (type === 'text') { r.h = made?.h || DEFAULTS.text.h; r.w = Math.max(r.w, 80); }
         r.w = Math.max(r.w, 20);
         r.h = Math.max(r.h, 20);
         if (!made) {
@@ -1029,6 +1033,7 @@ export class Editor {
     target.addEventListener('input', onInput);
     target.addEventListener('paste', onPaste);
     target.addEventListener('blur', onBlur);
+    requestAnimationFrame(() => { if (this.editingId === id) onInput(); });
     this._edit = { id, target, node, fresh, off: () => {
       target.removeEventListener('keydown', onKey);
       target.removeEventListener('input', onInput);

@@ -99,7 +99,7 @@ export function updateNode(node, el, ctx) {
     case 'text': {
       place(node, el, true);
       // autoW: the box hugs its text (click-created text), up to 640px, then wraps.
-      node.style.width = el.autoW ? 'max-content' : `${Math.max(1, el.w)}px`;
+      node.style.width = el.autoW ? 'max-content' : `${Math.max(40, el.w)}px`;
       node.style.maxWidth = el.autoW ? '640px' : '';
       node.style.minWidth = el.autoW ? '24px' : '';
       node.style.color = css(el.color || 'auto');
