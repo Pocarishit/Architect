@@ -8,6 +8,7 @@ import {
   rectFromPoints, lineGeom, distToSeg, penPath, simplify, center,
 } from './geometry.js';
 import { css } from './palette.js';
+import { sanitize, hasRichMarkup } from './richtext.js';
 
 export const CLIP_MARK = 'ARCHITECT/BLUEPRINT/1\n';
 const MIN_Z = 0.05;
@@ -225,6 +226,7 @@ export class Editor {
     for (const el of this.els) {
       seen.add(el.id);
       let node = this.nodes.get(el.id);
+      if (node && node._type !== el.type) { node.remove(); node = null; } // turned into another type
       if (!node) { node = createNode(el); this.nodes.set(el.id, node); }
       const layer = el.type === 'frame' ? this.frameLayer : this.elLayer;
       const idx = el.type === 'frame' ? fi++ : ei++;
@@ -249,10 +251,11 @@ export class Editor {
       const el = this.byId.get(id);
       if (!node || !el) continue;
       const hgt = node.offsetHeight;
-      if (hgt && Math.abs(hgt - el.h) > 0.5) fixes.set(id, hgt);
+      const wid = el.autoW ? node.offsetWidth : el.w;
+      if ((hgt && Math.abs(hgt - el.h) > 0.5) || Math.abs(wid - el.w) > 0.5) fixes.set(id, { h: hgt || el.h, w: wid });
     }
     if (!fixes.size) return;
-    this.els = this.els.map((e) => (fixes.has(e.id) ? { ...e, h: fixes.get(e.id) } : e));
+    this.els = this.els.map((e) => (fixes.has(e.id) ? { ...e, ...fixes.get(e.id) } : e));
     this.byId = new Map(this.els.map((e) => [e.id, e]));
     for (const id of fixes.keys()) { const n = this.nodes.get(id); if (n) n._el = this.byId.get(id); }
     this.emit('change', { silent: true });
@@ -278,7 +281,7 @@ export class Editor {
     if (this.presenting) return;
     const sel = this.selected();
     if (!sel.length) return;
-    const busy = g && (g.moved || g.type === 'resize' || g.type === 'endpoint');
+    const busy = g && (g.moved || g.type === 'resize' || g.type === 'endpoint' || g.type === 'anchor');
     const handle = (d, r) => {
       const x = r.x + (d.includes('w') ? 0 : d.includes('e') ? r.w : r.w / 2);
       const y = r.y + (d.includes('n') ? 0 : d.includes('s') ? r.h : r.h / 2);
@@ -302,11 +305,12 @@ export class Editor {
         : el.type === 'image' || el.type === 'video' ? ['nw', 'ne', 'se', 'sw']
           : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
       dirs.forEach((d) => o.append(handle(d, r)));
-      if ((el.type === 'sticky' || el.type === 'shape') && !busy) {
-        const off = 30 / z;
+      // Connection dots: drag one to draw a connector, click one to add a connected item.
+      if (CONNECTABLE.has(el.type) && !busy) {
+        const off = 20 / z;
         const spots = { e: [r.x + r.w + off, r.y + r.h / 2], w: [r.x - off, r.y + r.h / 2], s: [r.x + r.w / 2, r.y + r.h + off], n: [r.x + r.w / 2, r.y - off] };
         for (const [d, [x, y]] of Object.entries(spots)) {
-          o.append(h('div', { class: 'ov-qc', 'data-handle': `qc-${d}`, title: 'Add connected copy', style: { left: `${x}px`, top: `${y}px` } }, icon('plus', 12, { weight: 2.2 })));
+          o.append(h('div', { class: 'ov-qc', 'data-handle': `qc-${d}`, title: 'Drag to connect · click to add a connected item', style: { left: `${x}px`, top: `${y}px` } }));
         }
       }
     } else {
@@ -515,7 +519,7 @@ export class Editor {
     else if (isTypingTarget(document.activeElement)) { document.activeElement.blur(); this.vp.focus({ preventScroll: true }); }
 
     const p = this.toWorld(e.clientX, e.clientY);
-    const start = { cx: e.clientX, cy: e.clientY, p, shift: e.shiftKey, alt: e.altKey, pointerId: e.pointerId, touch: e.pointerType === 'touch' };
+    const start = { cx: e.clientX, cy: e.clientY, p, shift: e.shiftKey, alt: e.altKey, pointerId: e.pointerId, touch: e.pointerType === 'touch', link: e.target.closest('.el-txt a')?.href || null };
     if (e.button !== 0 && e.button !== 1) { this.pointers.delete(e.pointerId); return; }
     try { this.vp.setPointerCapture(e.pointerId); } catch {}
 
@@ -538,7 +542,7 @@ export class Editor {
   downSelect(start, handle, el) {
     if (handle) {
       const d = handle.dataset.handle;
-      if (d.startsWith('qc-')) { this.quickCreate(d.slice(3)); return; }
+      if (d.startsWith('qc-')) { this.beginAnchor(start, d.slice(3)); return; }
       if (d === 'a' || d === 'b') { this.beginEndpoint(start, d); return; }
       this.beginResize(start, d);
       return;
@@ -548,8 +552,8 @@ export class Editor {
         const ids = this.expandGroups([el.id]);
         if (this.sel.has(el.id)) { ids.forEach((id) => this.sel.delete(id)); this.syncSelection(); return; }
         this.select(ids, { add: true });
-      } else if (!this.sel.has(el.id)) this.select([el.id]);
-      if (this.selected().every((x) => x.locked)) return;
+      } else if (!this.sel.has(el.id)) { start.link = null; this.select([el.id]); }
+      if (this.selected().every((x) => x.locked)) { if (start.link) window.open(start.link, '_blank', 'noopener'); return; }
       this.beginMove(start);
       return;
     }
@@ -665,7 +669,11 @@ export class Editor {
         }
         this.setEls(this.els.map((el) => (startPos.has(el.id) ? moved(startPos.get(el.id), dx, dy) : el)), { commit: false });
       },
-      onUp: () => { if (g.moved) this.commitFrom(before); this.emit('selection'); },
+      onUp: () => {
+        if (g.moved) this.commitFrom(before);
+        else if (start.link) window.open(start.link, '_blank', 'noopener'); // click a link inside an already-selected item
+        this.emit('selection');
+      },
     };
     this.startGesture(g);
   }
@@ -765,7 +773,7 @@ export class Editor {
       onUp: () => {
         if (!made) {
           made = this.makeEl(type, null, start.p);
-          if (type === 'text') made.x = start.p.x - 4; // text starts where you click
+          if (type === 'text') { made.x = start.p.x - 4; made.autoW = true; } // text starts where you click and hugs its words
           this.setEls([...this.els, made], { commit: false });
         }
         this.pushUndo(before);
@@ -938,6 +946,7 @@ export class Editor {
       if (this.tool === 'select' && !this.presenting && !target.closest('[data-handle]')) {
         const made = this.makeEl('text', null, this.toWorld(e.clientX, e.clientY));
         made.x = this.toWorld(e.clientX, e.clientY).x - 4;
+        made.autoW = true;
         this.addEls([made], { edit: true });
       }
       return;
@@ -976,6 +985,7 @@ export class Editor {
     target.contentEditable = 'true';
     target.spellcheck = true;
     target.focus({ preventScroll: true });
+    try { document.execCommand('styleWithCSS', false, true); } catch {}
     const range = document.createRange();
     range.selectNodeContents(target);
     if (!selectAll) range.collapse(false);
@@ -985,6 +995,7 @@ export class Editor {
 
     const onKey = (e) => {
       e.stopPropagation();
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && el.type !== 'frame') { e.preventDefault(); this.emit('command', 'link'); return; }
       if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) || (el.type === 'frame' && e.key === 'Enter')) {
         e.preventDefault();
         this.finishEditing();
@@ -996,8 +1007,9 @@ export class Editor {
       if (el.type === 'text') {
         const hgt = node.offsetHeight;
         const cur = this.byId.get(id);
-        if (cur && Math.abs(hgt - cur.h) > 0.5) {
-          this.els = this.els.map((x) => (x.id === id ? { ...x, h: hgt } : x));
+        const wid = cur?.autoW ? node.offsetWidth : cur?.w;
+        if (cur && (Math.abs(hgt - cur.h) > 0.5 || Math.abs(wid - cur.w) > 0.5)) {
+          this.els = this.els.map((x) => (x.id === id ? { ...x, h: hgt, w: wid } : x));
           this.byId = new Map(this.els.map((x) => [x.id, x]));
           node._el = this.byId.get(id);
         }
@@ -1010,7 +1022,9 @@ export class Editor {
       const text = e.clipboardData?.getData('text/plain') || '';
       document.execCommand('insertText', false, text);
     };
-    const onBlur = () => { if (this.editingId === id) this.finishEditing(); };
+    const onBlur = () => { if (this.editingId === id && !this.holdEditing) this.finishEditing(); };
+    const onSel = () => this.emit('textselection');
+    document.addEventListener('selectionchange', onSel);
     target.addEventListener('keydown', onKey);
     target.addEventListener('input', onInput);
     target.addEventListener('paste', onPaste);
@@ -1020,6 +1034,7 @@ export class Editor {
       target.removeEventListener('input', onInput);
       target.removeEventListener('paste', onPaste);
       target.removeEventListener('blur', onBlur);
+      document.removeEventListener('selectionchange', onSel);
     } };
     this.renderOverlay();
     this.emit('selection');
@@ -1049,8 +1064,95 @@ export class Editor {
     }
     const key = el.type === 'frame' ? 'title' : 'text';
     const value = el.type === 'frame' ? (text.trim() || 'Frame') : text;
-    if (value !== (el[key] || '')) this.updateEls([id], { [key]: value }, { commit: !fresh });
+    const cleaned = el.type === 'frame' ? '' : sanitize(target.innerHTML);
+    const html = hasRichMarkup(cleaned) ? cleaned : undefined;
+    if (value !== (el[key] || '') || html !== el.html) this.updateEls([id], { [key]: value, html }, { commit: !fresh });
     else { node._force = true; this.sync(); }
+    this.emit('selection');
+  }
+
+  /* ================= text formatting ================= */
+  isEditingText() {
+    return !!this._edit && this.byId.get(this._edit.id)?.type !== 'frame';
+  }
+
+  queryText(cmd) {
+    if (!this.isEditingText()) return false;
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  }
+
+  // While typing: applies to the selected words. Otherwise: to the whole text of each selected item.
+  execText(cmd, value = null) {
+    if (this.isEditingText()) {
+      document.execCommand(cmd, false, value);
+      this.emit('textselection');
+      return;
+    }
+    const ids = this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked).map((e) => e.id);
+    if (!ids.length) return;
+    const before = this.els;
+    for (const id of ids) {
+      this.startEditing(id, { selectAll: true, fresh: true });
+      document.execCommand(cmd, false, value);
+      this.finishEditing();
+    }
+    this.commitFrom(before);
+    this.select(ids);
+  }
+
+  toggleTextProp(prop) {
+    const cmd = { bold: 'bold', italic: 'italic', underline: 'underline', strike: 'strikeThrough' }[prop];
+    if (this.isEditingText()) { this.execText(cmd); return; }
+    const texty = this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked);
+    if (!texty.length) return;
+    this.applyStyle(texty.map((e) => e.id), { [prop]: !texty.every((e) => e[prop]) });
+  }
+
+  // ask() resolves to the URL typed by the person (or null).
+  async addLink(ask) {
+    const editing = this.isEditingText();
+    let range = null;
+    if (editing) {
+      const s2 = window.getSelection();
+      if (s2.rangeCount) range = s2.getRangeAt(0).cloneRange();
+      this.holdEditing = true;
+    }
+    const raw = await ask();
+    if (editing) {
+      this.holdEditing = false;
+      const ed = this._edit;
+      if (!ed) return;
+      ed.target.focus({ preventScroll: true });
+      if (range) { const s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(range); }
+    }
+    if (!raw) return;
+    const url = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
+    if (editing && (!range || range.collapsed)) {
+      const esc = url.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      document.execCommand('insertHTML', false, `<a href="${esc}">${esc}</a>`);
+      return;
+    }
+    this.execText('createLink', url);
+  }
+
+  // Turn notes, text and shapes into each other, keeping their words and formatting.
+  convert(type, kind = 'rect') {
+    const ids = new Set(this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked && !(e.type === type && (type !== 'shape' || e.kind === kind))).map((e) => e.id));
+    if (!ids.size) return;
+    this.finishEditing();
+    const conv = (e) => {
+      const keep = {};
+      for (const k of ['id', 'text', 'html', 'font', 'align', 'bold', 'italic', 'underline', 'strike', 'group']) if (e[k] !== undefined) keep[k] = e[k];
+      const cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+      if (type === 'text') return { ...keep, type, x: e.x, y: e.y, w: Math.max(60, e.w), h: e.h, color: 'auto', fontSize: e.fontSize || 22, align: e.align || 'left' };
+      if (type === 'sticky') {
+        const sz = Math.max(160, Math.min(320, Math.max(e.w, e.h)));
+        return { ...keep, type, x: cx - sz / 2, y: cy - sz / 2, w: sz, h: sz, fill: this.opts.sticky || '#FFFFFF', align: e.align || 'center' };
+      }
+      const w = Math.max(e.w, 140), hh = Math.max(e.h, 90);
+      return { ...keep, type: 'shape', kind, x: cx - w / 2, y: cy - hh / 2, w, h: hh, fill: e.type === 'shape' ? e.fill : 'none', stroke: e.type === 'shape' ? e.stroke : 'auto', strokeWidth: e.strokeWidth ?? 2, fontSize: e.fontSize || 16, align: e.align || 'center' };
+    };
+    this.setEls(this.els.map((e) => (ids.has(e.id) ? conv(e) : e)));
     this.emit('selection');
   }
 
@@ -1273,19 +1375,68 @@ export class Editor {
     this.emit('selection');
   }
 
-  // "+" handles on a selected sticky/shape: add a connected copy on that side.
+  connectorFrom(src, b) {
+    return {
+      id: uid(), type: 'line', ...DEFAULTS.line, ...(this.lastStyle.line || {}),
+      route: this.lastStyle.line?.route || 'curve',
+      a: { id: src.id, x: src.x + src.w / 2, y: src.y + src.h / 2 }, b,
+    };
+  }
+
+  // Drag from a connection dot: the connector follows the pointer and snaps to whatever you drop it on.
+  // A click without dragging adds a connected item on that side instead.
+  beginAnchor(start, dir) {
+    const src = this.selected()[0];
+    if (!src || src.locked) return;
+    const before = this.els;
+    let line = null;
+    this.startGesture({
+      type: 'anchor', pointerId: start.pointerId,
+      onMove: (p, e) => {
+        if (!line) {
+          if (Math.hypot(e.clientX - start.cx, e.clientY - start.cy) < 5) return;
+          line = this.connectorFrom(src, { x: p.x, y: p.y });
+          this.setEls([...this.els, line], { commit: false });
+        }
+        const t = this.elementAt(p, line.id);
+        const bindId = t && t.id !== src.id ? t.id : null;
+        if (bindId !== this.bindHover) this.bindHover = bindId;
+        const b = bindId ? { id: bindId, x: p.x, y: p.y } : { x: p.x, y: p.y };
+        this.setEls(this.els.map((el) => (el.id === line.id ? { ...el, b } : el)), { commit: false });
+      },
+      onUp: () => {
+        this.bindHover = null;
+        if (!line) { this.quickCreate(dir); return; }
+        this.pushUndo(before);
+        this.emit('change', { commit: true });
+        this.sel = new Set([line.id]);
+        this.syncSelection();
+      },
+    });
+  }
+
+  // Add a connected item on one side: a blank copy for notes, shapes and text; a sticky next to media.
   quickCreate(dir) {
     const src = this.selected()[0];
     if (!src) return;
     const gap = 90;
-    const dxy = { e: [src.w + gap, 0], w: [-(src.w + gap), 0], s: [0, src.h + gap], n: [0, -(src.h + gap)] }[dir];
-    const copy = { ...structuredClone(src), id: uid(), x: src.x + dxy[0], y: src.y + dxy[1], text: '' };
-    delete copy.group; delete copy.locked;
-    const line = { id: uid(), type: 'line', ...DEFAULTS.line, ...(this.lastStyle.line || {}), route: (this.lastStyle.line?.route) || 'curve', a: { id: src.id, x: src.x, y: src.y }, b: { id: copy.id, x: copy.x, y: copy.y } };
-    this.setEls([...this.els, line, copy]);
-    this.sel = new Set([copy.id]);
+    let next;
+    if (src.type === 'sticky' || src.type === 'shape' || src.type === 'text') {
+      next = { ...structuredClone(src), id: uid(), text: '' };
+      delete next.group; delete next.locked;
+    } else {
+      next = this.makeEl('sticky', { x: 0, y: 0, w: 200, h: 200 });
+    }
+    const cx = src.x + src.w / 2, cy = src.y + src.h / 2;
+    if (dir === 'e') { next.x = src.x + src.w + gap; next.y = cy - next.h / 2; }
+    else if (dir === 'w') { next.x = src.x - gap - next.w; next.y = cy - next.h / 2; }
+    else if (dir === 's') { next.x = cx - next.w / 2; next.y = src.y + src.h + gap; }
+    else { next.x = cx - next.w / 2; next.y = src.y - gap - next.h; }
+    const line = this.connectorFrom(src, { id: next.id, x: next.x, y: next.y });
+    this.setEls([...this.els, line, next]);
+    this.sel = new Set([next.id]);
     this.syncSelection();
-    this.startEditing(copy.id, { fresh: true });
+    this.startEditing(next.id, { fresh: true });
   }
 
   /* ================= keyboard ================= */
@@ -1315,6 +1466,8 @@ export class Editor {
       else if (k === 'g') { e.preventDefault(); if (e.shiftKey) this.ungroup(); else this.group(); }
       else if (k === 'l' && e.shiftKey) { e.preventDefault(); this.toggleLock(); }
       else if (k === 'f') { e.preventDefault(); this.emit('command', 'search'); }
+      else if ((k === 'b' || k === 'i' || k === 'u') && this.sel.size) { e.preventDefault(); this.toggleTextProp({ b: 'bold', i: 'italic', u: 'underline' }[k]); }
+      else if (k === 'k' && this.sel.size) { e.preventDefault(); this.emit('command', 'link'); }
       else if (k === '=' || k === '+') { e.preventDefault(); this.zoomBy(1.25); }
       else if (k === '-' || k === '_') { e.preventDefault(); this.zoomBy(0.8); }
       else if (k === '0') { e.preventDefault(); this.zoomTo(1); }
@@ -1391,7 +1544,7 @@ function resized(el, nr, sx, sy, mapPt, single, corner) {
     return { ...el, ...nr, points: (el.points || []).map(([x, y]) => [Math.round(x * kx * 100) / 100, Math.round(y * ky * 100) / 100]) };
   }
   if (el.type === 'text') {
-    const out = { ...el, x: nr.x, y: nr.y, w: Math.max(24, nr.w) };
+    const out = { ...el, x: nr.x, y: nr.y, w: Math.max(24, nr.w), autoW: false };
     if (single && corner) out.fontSize = Math.max(6, Math.round((el.fontSize || 22) * sx * 2) / 2);
     else if (!single) out.fontSize = Math.max(6, Math.round((el.fontSize || 22) * Math.min(sx, sy) * 2) / 2);
     return out;

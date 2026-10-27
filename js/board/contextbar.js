@@ -5,6 +5,17 @@ import { menu, popover, closeFloating } from '../core/ui.js';
 import { clamp, kbd } from '../core/util.js';
 import { SWATCHES, FILLS, STICKY_FILLS, swatchStyle } from './palette.js';
 import { SHAPES, rectOf, unionRects } from './geometry.js';
+import { FONTS } from './render.js';
+
+const TXT = ['sticky', 'shape', 'text'];
+const HIGHLIGHTS = [
+  { id: 'rgba(240, 180, 41, .55)', name: 'Amber' },
+  { id: 'rgba(63, 166, 107, .5)', name: 'Green' },
+  { id: 'rgba(59, 130, 216, .5)', name: 'Blue' },
+  { id: 'rgba(215, 25, 33, .45)', name: 'Red' },
+  { id: 'rgba(140, 140, 140, .5)', name: 'Grey' },
+  { id: 'transparent', name: 'No highlight' },
+];
 
 const SIZES = [12, 14, 16, 18, 22, 28, 36, 48, 64, 96, 144];
 const SHAPE_NAMES = { rect: 'Rectangle', round: 'Rounded', ellipse: 'Ellipse', triangle: 'Triangle', diamond: 'Diamond', hexagon: 'Hexagon', parallelogram: 'Parallelogram', star: 'Star', arrowblock: 'Arrow', pill: 'Pill' };
@@ -49,7 +60,7 @@ function optionRow(options, current, onPick) {
   return wrap;
 }
 
-export function createContextBar(page, editor, { sendToPaths, present, openLink }) {
+export function createContextBar(page, editor, { sendToPaths, present, openLink, askLink }) {
   const bar = h('div', { class: 'bp-ctx', role: 'toolbar', 'aria-label': 'Selection tools', hidden: true });
   page.append(bar);
 
@@ -76,6 +87,19 @@ export function createContextBar(page, editor, { sendToPaths, present, openLink 
       bar.hidden = false;
       position();
       return;
+    }
+
+    const texty = of('sticky', 'shape', 'text');
+    const editing = editor.isEditingText();
+    if (texty.length) {
+      items.push(btn('turnInto', 'Turn into', (a) => menu(a, [
+        { label: 'Text', icon: 'text', onSelect: () => editor.convert('text') },
+        { label: 'Sticky note', icon: 'sticky', onSelect: () => editor.convert('sticky') },
+        { label: 'Rectangle', icon: 'rect', onSelect: () => editor.convert('shape', 'rect') },
+        { label: 'Rounded', icon: 'round', onSelect: () => editor.convert('shape', 'round') },
+        { label: 'Ellipse', icon: 'ellipse', onSelect: () => editor.convert('shape', 'ellipse') },
+        { label: 'Diamond', icon: 'diamond', onSelect: () => editor.convert('shape', 'diamond') },
+      ])));
     }
 
     if (one?.type === 'shape') {
@@ -106,15 +130,19 @@ export function createContextBar(page, editor, { sendToPaths, present, openLink 
         ], curDash, (d) => set({ dash: d }, ['shape', 'line']))) : null)), {}));
     }
 
-    const texty = of('sticky', 'shape', 'text');
     if (texty.length) {
-      const fs = common(texty, 'fontSize', null);
-      items.push(btn('type', 'Text', (a) => popover(a, textPanel(texty)), { text: fs ? String(fs) : (texty.every((e) => e.type === 'sticky') ? 'Auto' : null) }));
-      const b = texty.every((e) => e.bold);
-      items.push(btn('bold', 'Bold', () => set({ bold: !b }, ['sticky', 'shape', 'text']), { on: b }));
-      const al = common(texty, 'align', null) || 'center';
+      items.push(h('span', { class: 'ctx-sep' }));
+      items.push(fontPicker(texty));
+      items.push(sizeStepper(texty));
+      const styleOn = editing ? ['bold', 'italic', 'underline', 'strikeThrough'].some((c) => editor.queryText(c)) : texty.every((e) => e.bold);
+      items.push(btn('bold', 'Bold, italic, underline', (a) => popover(a, stylePanel(texty)), { on: styleOn }));
+      const al = common(texty, 'align', null) || (texty[0].type === 'text' ? 'left' : 'center');
       const nextAlign = { left: 'center', center: 'right', right: 'left' }[al] || 'left';
-      items.push(btn({ left: 'taLeft', center: 'taCenter', right: 'taRight' }[al] || 'taCenter', 'Text alignment', () => set({ align: nextAlign }, ['sticky', 'shape', 'text'])));
+      items.push(btn({ left: 'taLeft', center: 'taCenter', right: 'taRight' }[al] || 'taCenter', 'Text alignment', () => set({ align: nextAlign }, TXT)));
+      items.push(btn('list', 'Bullet list', () => editor.execText('insertUnorderedList'), { on: editor.queryText('insertUnorderedList') }));
+      if (askLink) items.push(btn('link', 'Link (⌘K)', () => askLink()));
+      items.push(btn(textColorIcon(texty, editing), 'Text colour', (a) => popover(a, colorPanel(texty))));
+      items.push(btn('highlighter', 'Highlight', (a) => popover(a, highlightPanel())));
     }
 
     const lines = of('line');
@@ -181,6 +209,84 @@ export function createContextBar(page, editor, { sendToPaths, present, openLink 
     }, icon(k, 20))));
     paint(cur);
     return h('div', { class: 'pop' }, h('div', { class: 'pop-label' }, 'Shape'), grid);
+  }
+
+  function fontPicker(texty) {
+    const font = common(texty, 'font', 'sans');
+    const name = FONTS.find((f) => f.id === font)?.name || 'Mixed';
+    return btn(h('span', { class: `ctx-font ff-${font || 'sans'}` }, name), 'Font', (a) => menu(a, FONTS.map((f) => ({
+      label: f.name, labelClass: `ff-${f.id}`, checked: f.id === font, onSelect: () => set({ font: f.id }, TXT),
+    }))), { cls: 'ctx-wide' });
+  }
+
+  function sizeStepper(texty) {
+    const fs = common(texty, 'fontSize', null);
+    const autoOk = texty.every((e) => e.type === 'sticky');
+    const base = fs ?? (autoOk ? 18 : texty[0].fontSize || 22);
+    const input = h('input', { class: 'ctx-size', value: fs != null ? String(fs) : (autoOk ? 'Auto' : ''), 'aria-label': 'Font size', inputmode: 'numeric', maxlength: 3 });
+    const apply = () => {
+      const v = Math.round(parseFloat(input.value));
+      if (v >= 4 && v <= 400 && v !== fs) set({ fontSize: v }, TXT);
+      else input.value = fs != null ? String(fs) : (autoOk ? 'Auto' : '');
+    };
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); apply(); input.blur(); }
+      else if (e.key === 'Escape') { input.value = fs ?? 'Auto'; input.blur(); }
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); step(e.key === 'ArrowUp' ? 1 : -1); }
+    });
+    input.addEventListener('change', apply);
+    const step = (dir) => {
+      const next = dir > 0 ? (SIZES.find((sz) => sz > base) ?? base + 24) : ([...SIZES].reverse().find((sz) => sz < base) ?? Math.max(4, base - 2));
+      set({ fontSize: next }, TXT);
+    };
+    const arrow = (dir) => h('button', { type: 'button', class: 'ctx-step', 'aria-label': dir > 0 ? 'Bigger text' : 'Smaller text', onmousedown: (e) => e.preventDefault(), onclick: () => step(dir) }, icon(dir > 0 ? 'chevronUp' : 'chevronDown', 12, { weight: 2 }));
+    return h('div', { class: 'ctx-sizebox', 'data-tip': 'Font size' }, input, h('div', { class: 'ctx-steps' }, arrow(1), arrow(-1)));
+  }
+
+  function stylePanel(texty) {
+    const wrap = h('div', { class: 'opt-row' });
+    const opts = [['bold', 'bold', 'Bold (⌘B)'], ['italic', 'italic', 'Italic (⌘I)'], ['underline', 'underline', 'Underline (⌘U)'], ['strike', 'strike', 'Strikethrough']];
+    const cmds = { bold: 'bold', italic: 'italic', underline: 'underline', strike: 'strikeThrough' };
+    const paint = () => {
+      const now = editor.selected().filter((e) => TXT.includes(e.type));
+      wrap.replaceChildren(...opts.map(([prop, ic, label]) => {
+        const on = editor.isEditingText() ? editor.queryText(cmds[prop]) : now.every((e) => e[prop]);
+        return h('button', { type: 'button', class: ['tool-opt', on && 'is-on'], 'aria-label': kbd(label), title: kbd(label), 'aria-pressed': String(on), onclick: () => { editor.toggleTextProp(prop); paint(); } }, icon(ic, 18));
+      }));
+    };
+    paint();
+    return h('div', { class: 'pop' }, h('div', { class: 'pop-label' }, editor.isEditingText() ? 'Style — selected words' : 'Style'), wrap);
+  }
+
+  function textColorIcon(texty, editing) {
+    const c = editing ? null : common(texty, 'color', null);
+    return h('span', { class: 'ctx-tc' }, icon('textColor', 18), h('i', { style: { background: c ? swatchStyle(c).background : 'currentColor' } }));
+  }
+
+  function colorPanel(texty) {
+    if (editor.isEditingText()) {
+      return h('div', { class: 'pop' },
+        h('div', { class: 'pop-label' }, 'Colour — selected words'),
+        colorGrid(SWATCHES.filter((c) => c.id !== 'auto'), null, (c) => editor.execText('foreColor', c)),
+        h('button', { type: 'button', class: 'tool-opt wide', onclick: () => editor.execText('removeFormat') }, icon('clearFormat', 16), h('span', {}, 'Clear formatting')));
+    }
+    const hasBoxText = texty.some((e) => e.type !== 'text');
+    const colors = hasBoxText ? [{ id: 'contrast', name: 'Automatic contrast' }, ...SWATCHES.filter((s2) => s2.id !== 'auto')] : SWATCHES;
+    const cur = common(texty, 'color', hasBoxText ? 'contrast' : 'auto');
+    return h('div', { class: 'pop' },
+      h('div', { class: 'pop-label' }, 'Text colour'),
+      colorGrid(colors, cur || (hasBoxText ? 'contrast' : 'auto'), (c) => set({ color: c === 'contrast' ? undefined : c }, TXT)));
+  }
+
+  function highlightPanel() {
+    const grid = h('div', { class: 'pal-grid' }, HIGHLIGHTS.map((c) => h('button', {
+      type: 'button', class: ['pal-sw', c.id === 'transparent' && 'is-none'], 'aria-label': c.name, title: c.name,
+      style: c.id === 'transparent' ? null : { background: c.id },
+      onclick: () => editor.execText('hiliteColor', c.id),
+    })));
+    return h('div', { class: 'pop' }, h('div', { class: 'pop-label' }, editor.isEditingText() ? 'Highlight — selected words' : 'Highlight'), grid);
   }
 
   function textPanel(texty) {
@@ -254,10 +360,10 @@ export function createContextBar(page, editor, { sendToPaths, present, openLink 
     const pr = page.getBoundingClientRect();
     const bw = bar.offsetWidth, bh = bar.offsetHeight;
     let x = (tl.x + br.x) / 2 - bw / 2 - pr.left;
-    let y = tl.y - pr.top - bh - 16;
+    let y = tl.y - pr.top - bh - 34; // clears the connection dots
     const topLimit = 68;
     if (y < topLimit) {
-      y = br.y - pr.top + 16;
+      y = br.y - pr.top + 34;
       if (y + bh > pr.height - 72) y = topLimit;
     }
     x = clamp(x, 8, Math.max(8, pr.width - bw - 8));
@@ -265,6 +371,18 @@ export function createContextBar(page, editor, { sendToPaths, present, openLink 
   }
 
   editor.on('selection', rebuild);
+  let selRaf = 0;
+  let lastSig = '';
+  editor.on('textselection', () => {
+    cancelAnimationFrame(selRaf);
+    selRaf = requestAnimationFrame(() => {
+      // Only repaint when bold/italic/underline/strike/list state actually changed under the caret.
+      const sig = ['bold', 'italic', 'underline', 'strikeThrough', 'insertUnorderedList'].map((c) => (editor.queryText(c) ? 1 : 0)).join('');
+      if (sig === lastSig || bar.contains(document.activeElement)) return;
+      lastSig = sig;
+      rebuild();
+    });
+  });
   editor.on('change', () => { if (!editor.g) rebuild(); });
   editor.on('camera', position);
   editor.on('gesture', (on) => {

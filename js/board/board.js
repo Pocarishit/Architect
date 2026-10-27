@@ -1,7 +1,7 @@
 // Blueprint board page: loads a board, wires the editor to toolbars, panels, media and autosave.
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
-import { menu, popover, toast, dialog, confirmDialog, closeFloating } from '../core/ui.js';
+import { menu, popover, toast, dialog, confirmDialog, promptDialog, closeFloating } from '../core/ui.js';
 import { uid, store, debounce, posBetween, clamp, kbd } from '../core/util.js';
 import { go } from '../core/router.js';
 import { api, friendlyError } from '../data/api.js';
@@ -294,6 +294,7 @@ export function mountBoard(root, boardId) {
     /* ---------- context bar ---------- */
     createContextBar(page, editor, {
       sendToPaths,
+      askLink,
       present: (id) => startPresent(id),
       openLink: (url) => window.open(url, '_blank', 'noopener'),
     });
@@ -318,6 +319,7 @@ export function mountBoard(root, boardId) {
       else if (cmd === 'search') openSearch();
       else if (cmd === 'shortcuts') showShortcuts();
       else if (cmd === 'export') exportJson();
+      else if (cmd === 'link') askLink();
     });
     editor.on('contextmenu', ({ x, y, onElement, at }) => contextMenu({ x, y }, onElement, at));
 
@@ -366,6 +368,10 @@ export function mountBoard(root, boardId) {
         el = { type: 'link', url: info.url, host: info.host, title: tail || info.host, w: 320, h: 132 };
       }
       editor.addEls([editor.place(el, at)]);
+    }
+
+    function askLink() {
+      editor.addLink(() => promptDialog('Add link', { placeholder: 'https://…', ok: 'Add link', label: 'Address' }));
     }
 
     function openEmbed() {

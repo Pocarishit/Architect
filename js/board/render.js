@@ -3,13 +3,25 @@ import { h, s } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { css, onColor } from './palette.js';
 import { lineGeom, capPath, shapePath, penPath } from './geometry.js';
+import { sanitize } from './richtext.js';
 
-const FONT = { sans: 'f-sans', mono: 'f-mono', dot: 'f-dot' };
+export const FONTS = [
+  { id: 'sans', name: 'Space Grotesk' },
+  { id: 'noto', name: 'Noto Sans' },
+  { id: 'mono', name: 'Space Mono' },
+  { id: 'dot', name: 'Doto' },
+  { id: 'serif', name: 'Instrument Serif' },
+  { id: 'hand', name: 'Caveat' },
+];
+const FONT = Object.fromEntries(FONTS.map((f) => [f.id, `f-${f.id}`]));
 const STICKY_PAD = 16;
 
 export function createNode(el) {
-  if (el.type === 'line' || el.type === 'pen') return s('svg', { class: `el el-${el.type}`, 'data-eid': el.id });
-  return h('div', { class: `el el-${el.type}`, 'data-eid': el.id });
+  const node = el.type === 'line' || el.type === 'pen'
+    ? s('svg', { class: `el el-${el.type}`, 'data-eid': el.id })
+    : h('div', { class: `el el-${el.type}`, 'data-eid': el.id });
+  node._type = el.type;
+  return node;
 }
 
 function place(node, el, autoHeight = false) {
@@ -27,12 +39,19 @@ function textBlock(node, el, { align = 'left', size = 18, placeholder = 'Type so
     node.append(t);
     node._text = t;
   }
-  t.className = ['el-txt', FONT[el.font] || 'f-sans', el.bold && 'is-bold', el.italic && 'is-italic'].filter(Boolean).join(' ');
+  t.className = ['el-txt', FONT[el.font] || 'f-sans', el.bold && 'is-bold', el.italic && 'is-italic', el.underline && 'is-underline', el.strike && 'is-strike'].filter(Boolean).join(' ');
   t.style.textAlign = el.align || align;
   if (el.fontSize) t.style.fontSize = `${el.fontSize}px`;
   else if (size) t.style.fontSize = `${size}px`;
   t.dataset.ph = placeholder;
-  if (!t.isContentEditable && t.textContent !== (el.text || '')) t.textContent = el.text || '';
+  if (!t.isContentEditable) {
+    const key = el.html ? `h:${el.html}` : `t:${el.text || ''}`;
+    if (t._key !== key) {
+      if (el.html) t.innerHTML = sanitize(el.html);
+      else t.textContent = el.text || '';
+      t._key = key;
+    }
+  }
   return t;
 }
 
@@ -79,6 +98,10 @@ export function updateNode(node, el, ctx) {
     }
     case 'text': {
       place(node, el, true);
+      // autoW: the box hugs its text (click-created text), up to 640px, then wraps.
+      node.style.width = el.autoW ? 'max-content' : `${Math.max(1, el.w)}px`;
+      node.style.maxWidth = el.autoW ? '640px' : '';
+      node.style.minWidth = el.autoW ? '24px' : '';
       node.style.color = css(el.color || 'auto');
       node.style.background = el.fill && el.fill !== 'none' ? css(el.fill) : '';
       node.classList.toggle('has-fill', !!(el.fill && el.fill !== 'none'));
