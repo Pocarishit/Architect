@@ -8,6 +8,7 @@ import {
   rectFromPoints, lineGeom, distToSeg, penPath, simplify, center,
 } from './geometry.js';
 import { css } from './palette.js';
+import { sanitize, hasRichMarkup } from './richtext.js';
 
 export const CLIP_MARK = 'ARCHITECT/BLUEPRINT/1\n';
 const MIN_Z = 0.05;
@@ -36,7 +37,9 @@ export class Editor {
   constructor(host, { elements = [], camera = null, mediaUrl = () => null } = {}) {
     this.host = host;
     this.mediaUrl = mediaUrl;
-    this.els = (elements || []).filter((e) => e && e.id && e.type);
+    this.els = (elements || []).filter((e) => e && e.id && e.type)
+      // Repair text boxes saved too narrow (older versions): let them hug their words again.
+      .map((e) => (e.type === 'text' && !e.autoW && e.w < 60 ? { ...e, autoW: true } : e));
     this.byId = new Map(this.els.map((e) => [e.id, e]));
     this.sel = new Set();
     this.tool = 'select';
@@ -225,6 +228,7 @@ export class Editor {
     for (const el of this.els) {
       seen.add(el.id);
       let node = this.nodes.get(el.id);
+      if (node && node._type !== el.type) { node.remove(); node = null; } // turned into another type
       if (!node) { node = createNode(el); this.nodes.set(el.id, node); }
       const layer = el.type === 'frame' ? this.frameLayer : this.elLayer;
       const idx = el.type === 'frame' ? fi++ : ei++;
@@ -517,7 +521,7 @@ export class Editor {
     else if (isTypingTarget(document.activeElement)) { document.activeElement.blur(); this.vp.focus({ preventScroll: true }); }
 
     const p = this.toWorld(e.clientX, e.clientY);
-    const start = { cx: e.clientX, cy: e.clientY, p, shift: e.shiftKey, alt: e.altKey, pointerId: e.pointerId, touch: e.pointerType === 'touch' };
+    const start = { cx: e.clientX, cy: e.clientY, p, shift: e.shiftKey, alt: e.altKey, pointerId: e.pointerId, touch: e.pointerType === 'touch', link: e.target.closest('.el-txt a')?.href || null };
     if (e.button !== 0 && e.button !== 1) { this.pointers.delete(e.pointerId); return; }
     try { this.vp.setPointerCapture(e.pointerId); } catch {}
 
@@ -550,8 +554,8 @@ export class Editor {
         const ids = this.expandGroups([el.id]);
         if (this.sel.has(el.id)) { ids.forEach((id) => this.sel.delete(id)); this.syncSelection(); return; }
         this.select(ids, { add: true });
-      } else if (!this.sel.has(el.id)) this.select([el.id]);
-      if (this.selected().every((x) => x.locked)) return;
+      } else if (!this.sel.has(el.id)) { start.link = null; this.select([el.id]); }
+      if (this.selected().every((x) => x.locked)) { if (start.link) window.open(start.link, '_blank', 'noopener'); return; }
       this.beginMove(start);
       return;
     }
@@ -667,7 +671,11 @@ export class Editor {
         }
         this.setEls(this.els.map((el) => (startPos.has(el.id) ? moved(startPos.get(el.id), dx, dy) : el)), { commit: false });
       },
-      onUp: () => { if (g.moved) this.commitFrom(before); this.emit('selection'); },
+      onUp: () => {
+        if (g.moved) this.commitFrom(before);
+        else if (start.link) window.open(start.link, '_blank', 'noopener'); // click a link inside an already-selected item
+        this.emit('selection');
+      },
     };
     this.startGesture(g);
   }
@@ -748,12 +756,14 @@ export class Editor {
       type: 'create', pointerId: start.pointerId,
       onMove: (p, e) => {
         if (!made && Math.hypot(e.clientX - start.cx, e.clientY - start.cy) < 6) return;
+        // Text: a small wobble while clicking is still a click; only a real sideways drag sets a wrap width.
+        if (!made && type === 'text' && Math.abs(e.clientX - start.cx) < 40) return;
         let r = rectFromPoints(start.p, p);
         if (type === 'sticky' || e.shiftKey) {
           const s2 = Math.max(r.w, r.h);
           r = { x: p.x < start.p.x ? start.p.x - s2 : start.p.x, y: p.y < start.p.y ? start.p.y - s2 : start.p.y, w: s2, h: s2 };
         }
-        if (type === 'text') r.h = made?.h || DEFAULTS.text.h;
+        if (type === 'text') { r.h = made?.h || DEFAULTS.text.h; r.w = Math.max(r.w, 80); }
         r.w = Math.max(r.w, 20);
         r.h = Math.max(r.h, 20);
         if (!made) {
@@ -979,6 +989,7 @@ export class Editor {
     target.contentEditable = 'true';
     target.spellcheck = true;
     target.focus({ preventScroll: true });
+    try { document.execCommand('styleWithCSS', false, true); } catch {}
     const range = document.createRange();
     range.selectNodeContents(target);
     if (!selectAll) range.collapse(false);
@@ -988,6 +999,7 @@ export class Editor {
 
     const onKey = (e) => {
       e.stopPropagation();
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && el.type !== 'frame') { e.preventDefault(); this.emit('command', 'link'); return; }
       if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) || (el.type === 'frame' && e.key === 'Enter')) {
         e.preventDefault();
         this.finishEditing();
@@ -1014,16 +1026,20 @@ export class Editor {
       const text = e.clipboardData?.getData('text/plain') || '';
       document.execCommand('insertText', false, text);
     };
-    const onBlur = () => { if (this.editingId === id) this.finishEditing(); };
+    const onBlur = () => { if (this.editingId === id && !this.holdEditing) this.finishEditing(); };
+    const onSel = () => this.emit('textselection');
+    document.addEventListener('selectionchange', onSel);
     target.addEventListener('keydown', onKey);
     target.addEventListener('input', onInput);
     target.addEventListener('paste', onPaste);
     target.addEventListener('blur', onBlur);
+    requestAnimationFrame(() => { if (this.editingId === id) onInput(); });
     this._edit = { id, target, node, fresh, off: () => {
       target.removeEventListener('keydown', onKey);
       target.removeEventListener('input', onInput);
       target.removeEventListener('paste', onPaste);
       target.removeEventListener('blur', onBlur);
+      document.removeEventListener('selectionchange', onSel);
     } };
     this.renderOverlay();
     this.emit('selection');
@@ -1053,8 +1069,95 @@ export class Editor {
     }
     const key = el.type === 'frame' ? 'title' : 'text';
     const value = el.type === 'frame' ? (text.trim() || 'Frame') : text;
-    if (value !== (el[key] || '')) this.updateEls([id], { [key]: value }, { commit: !fresh });
+    const cleaned = el.type === 'frame' ? '' : sanitize(target.innerHTML);
+    const html = hasRichMarkup(cleaned) ? cleaned : undefined;
+    if (value !== (el[key] || '') || html !== el.html) this.updateEls([id], { [key]: value, html }, { commit: !fresh });
     else { node._force = true; this.sync(); }
+    this.emit('selection');
+  }
+
+  /* ================= text formatting ================= */
+  isEditingText() {
+    return !!this._edit && this.byId.get(this._edit.id)?.type !== 'frame';
+  }
+
+  queryText(cmd) {
+    if (!this.isEditingText()) return false;
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  }
+
+  // While typing: applies to the selected words. Otherwise: to the whole text of each selected item.
+  execText(cmd, value = null) {
+    if (this.isEditingText()) {
+      document.execCommand(cmd, false, value);
+      this.emit('textselection');
+      return;
+    }
+    const ids = this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked).map((e) => e.id);
+    if (!ids.length) return;
+    const before = this.els;
+    for (const id of ids) {
+      this.startEditing(id, { selectAll: true, fresh: true });
+      document.execCommand(cmd, false, value);
+      this.finishEditing();
+    }
+    this.commitFrom(before);
+    this.select(ids);
+  }
+
+  toggleTextProp(prop) {
+    const cmd = { bold: 'bold', italic: 'italic', underline: 'underline', strike: 'strikeThrough' }[prop];
+    if (this.isEditingText()) { this.execText(cmd); return; }
+    const texty = this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked);
+    if (!texty.length) return;
+    this.applyStyle(texty.map((e) => e.id), { [prop]: !texty.every((e) => e[prop]) });
+  }
+
+  // ask() resolves to the URL typed by the person (or null).
+  async addLink(ask) {
+    const editing = this.isEditingText();
+    let range = null;
+    if (editing) {
+      const s2 = window.getSelection();
+      if (s2.rangeCount) range = s2.getRangeAt(0).cloneRange();
+      this.holdEditing = true;
+    }
+    const raw = await ask();
+    if (editing) {
+      this.holdEditing = false;
+      const ed = this._edit;
+      if (!ed) return;
+      ed.target.focus({ preventScroll: true });
+      if (range) { const s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(range); }
+    }
+    if (!raw) return;
+    const url = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
+    if (editing && (!range || range.collapsed)) {
+      const esc = url.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      document.execCommand('insertHTML', false, `<a href="${esc}">${esc}</a>`);
+      return;
+    }
+    this.execText('createLink', url);
+  }
+
+  // Turn notes, text and shapes into each other, keeping their words and formatting.
+  convert(type, kind = 'rect') {
+    const ids = new Set(this.selected().filter((e) => TEXTUAL.has(e.type) && !e.locked && !(e.type === type && (type !== 'shape' || e.kind === kind))).map((e) => e.id));
+    if (!ids.size) return;
+    this.finishEditing();
+    const conv = (e) => {
+      const keep = {};
+      for (const k of ['id', 'text', 'html', 'font', 'align', 'bold', 'italic', 'underline', 'strike', 'group']) if (e[k] !== undefined) keep[k] = e[k];
+      const cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+      if (type === 'text') return { ...keep, type, x: e.x, y: e.y, w: Math.max(60, e.w), h: e.h, color: 'auto', fontSize: e.fontSize || 22, align: e.align || 'left' };
+      if (type === 'sticky') {
+        const sz = Math.max(160, Math.min(320, Math.max(e.w, e.h)));
+        return { ...keep, type, x: cx - sz / 2, y: cy - sz / 2, w: sz, h: sz, fill: this.opts.sticky || '#FFFFFF', align: e.align || 'center' };
+      }
+      const w = Math.max(e.w, 140), hh = Math.max(e.h, 90);
+      return { ...keep, type: 'shape', kind, x: cx - w / 2, y: cy - hh / 2, w, h: hh, fill: e.type === 'shape' ? e.fill : 'none', stroke: e.type === 'shape' ? e.stroke : 'auto', strokeWidth: e.strokeWidth ?? 2, fontSize: e.fontSize || 16, align: e.align || 'center' };
+    };
+    this.setEls(this.els.map((e) => (ids.has(e.id) ? conv(e) : e)));
     this.emit('selection');
   }
 
@@ -1368,6 +1471,8 @@ export class Editor {
       else if (k === 'g') { e.preventDefault(); if (e.shiftKey) this.ungroup(); else this.group(); }
       else if (k === 'l' && e.shiftKey) { e.preventDefault(); this.toggleLock(); }
       else if (k === 'f') { e.preventDefault(); this.emit('command', 'search'); }
+      else if ((k === 'b' || k === 'i' || k === 'u') && this.sel.size) { e.preventDefault(); this.toggleTextProp({ b: 'bold', i: 'italic', u: 'underline' }[k]); }
+      else if (k === 'k' && this.sel.size) { e.preventDefault(); this.emit('command', 'link'); }
       else if (k === '=' || k === '+') { e.preventDefault(); this.zoomBy(1.25); }
       else if (k === '-' || k === '_') { e.preventDefault(); this.zoomBy(0.8); }
       else if (k === '0') { e.preventDefault(); this.zoomTo(1); }
