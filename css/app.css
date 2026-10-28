@@ -364,3 +364,43 @@ a.crumb:hover { color: var(--fg); }
 @media (hover: none) {
   .tile-more, .ptask-more, .pcol-head .icon-btn { opacity: 1; }
 }
+
+/* ---------- Paths on phones: tiles, then one path at a time ---------- */
+.ptiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ptile {
+  aspect-ratio: 1;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 16px; border-radius: 28px; text-align: left;
+  background: var(--s1); border: 1px solid var(--line);
+  transition: transform .12s var(--ease), border-color .12s;
+  -webkit-tap-highlight-color: transparent;
+}
+.ptile:active { transform: scale(.97); }
+.ptile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.ptile-count { font-family: var(--f-dot); font-weight: 800; font-size: 46px; line-height: .85; font-variant-numeric: tabular-nums; }
+.ptile .now-tag { margin: 4px 0 0; }
+.ptile-bottom { display: grid; gap: 10px; }
+.ptile-dots { display: flex; flex-wrap: wrap; gap: 3px; }
+.ptile-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--fg-4); }
+.ptile-dots i.on { background: var(--fg); }
+.ptile-name { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptile.is-now { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.ptile.is-now .ptile-dots i { background: color-mix(in srgb, var(--bg) 30%, transparent); }
+.ptile.is-now .ptile-dots i.on { background: var(--bg); }
+.ptile.is-new { background: transparent; border-style: dashed; border-color: var(--line-2); color: var(--fg-3); justify-content: center; align-items: center; gap: 10px; }
+
+.pdetail-head { display: grid; gap: 14px; margin-bottom: 24px; }
+.pdetail-bar { display: flex; align-items: center; justify-content: space-between; margin: -8px -8px 0 -6px; }
+.pback {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 8px; border-radius: 999px;
+  font-family: var(--f-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-2);
+}
+.pback:active { background: var(--s2); }
+.pdetail-title { font-size: clamp(44px, 14vw, 72px); overflow-wrap: anywhere; }
+.pdetail-rename { height: 56px; font-size: 22px; margin: 0; }
+.pdetail-head .paths-meta { padding: 0; gap: 12px; }
+.pdetail-head .now-tag { margin: 0; }
+.pcol.is-full { background: transparent; border: 0; padding: 0; }
+.pcol.is-full .ptask { padding: 16px 12px 16px 16px; }
+.pcol.is-full .pcol-add { height: 52px; border: 1px dashed var(--line-2); justify-content: center; margin-top: 10px; }
+.paths.is-mobile-detail { padding-top: 20px; }

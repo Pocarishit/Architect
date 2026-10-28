@@ -112,7 +112,7 @@ body.is-board .outlet { position: fixed; inset: 0; }
 .el-frame.is-selected .el-frame-title { color: var(--fg); }
 .el-frame-title[contenteditable="true"] { user-select: text; -webkit-user-select: text; cursor: text; color: var(--fg); overflow: visible; text-overflow: clip; }
 
-.el-image img { width: 100%; height: 100%; display: block; object-fit: fill; border-radius: 2px; -webkit-user-drag: none; }
+.el-image img { width: 100%; height: 100%; display: block; object-fit: fill; border-radius: 2px; -webkit-user-drag: none; user-select: none; pointer-events: none; }
 .el-missing {
   width: 100%; height: 100%; display: grid; place-items: center; align-content: center; gap: 8px;
   border: 1px dashed var(--line-2); border-radius: 6px; color: var(--fg-3);
@@ -377,13 +377,7 @@ body.bp-busy .el.is-live .el-media { pointer-events: none; }
 .keys dt { font-family: var(--f-mono); font-size: 12px; color: var(--fg); white-space: nowrap; }
 .keys dd { margin: 0; font-size: 13px; color: var(--fg-2); }
 
-@media (max-width: 720px) {
-  .bp-mark, .bp-status span { display: none; }
-  .bp-tools { top: auto; bottom: 12px; left: 12px; transform: none; max-height: calc(100% - 150px); }
-  .bp-tool { width: 38px; height: 38px; }
-  .bp-title { max-width: 38vw; }
-  .hide-sm { display: none; }
-}
+
 
 /* ---------- Text toolbar ---------- */
 .ff-sans { font-family: var(--f-sans); }
@@ -407,3 +401,54 @@ body.bp-busy .el.is-live .el-media { pointer-events: none; }
 .ctx-tc { position: relative; display: grid; place-items: center; }
 .ctx-tc i { position: absolute; left: 3px; right: 3px; bottom: -1px; height: 3px; border-radius: 2px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 20%, transparent); }
 .menu .menu-label.ff-serif, .menu .menu-label.ff-hand { line-height: 1.1; }
+
+/* Move handle for a playing video / embed */
+.ov-grip {
+  transform: translateY(calc(-100% - 8px * var(--iz)));
+  display: inline-flex; align-items: center; gap: calc(5px * var(--iz));
+  height: calc(26px * var(--iz)); padding: 0 calc(10px * var(--iz));
+  border-radius: 999px; background: var(--sel); color: var(--paper);
+  font: calc(11px * var(--iz))/1 var(--f-mono); letter-spacing: .06em; text-transform: uppercase;
+  pointer-events: auto; cursor: grab; white-space: nowrap;
+}
+.ov-grip .ic { width: calc(13px * var(--iz)); height: calc(13px * var(--iz)); }
+.ov-grip:active { cursor: grabbing; }
+
+/* ---------- Phones ---------- */
+@media (max-width: 720px) {
+  .bp-top { top: calc(8px + env(safe-area-inset-top)); left: 8px; right: 8px; gap: 8px; }
+  .bp-pill { border-radius: 14px; }
+  .bp-icon { width: 34px; height: 34px; }
+  .bp-mark, .bp-status span, .hide-sm { display: none; }
+  .bp-top > .bp-pill:first-child { min-width: 0; flex: 1; }
+  .bp-title { min-width: 0; flex: 1; max-width: none; }
+
+  /* Tools become a scrollable dock along the bottom */
+  .bp-tools {
+    top: auto; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom));
+    transform: none; max-height: none;
+    flex-direction: row; overflow-x: auto; overflow-y: hidden; overscroll-behavior: contain;
+    border-radius: 16px; padding: 4px;
+    scroll-snap-type: x proximity;
+  }
+  .bp-tool { width: 44px; height: 44px; scroll-snap-align: start; }
+  .bp-tool[aria-label^="Hand"] { display: none; } /* one finger on empty board already pans */
+  .bp-tsep { width: 1px; height: 26px; margin: 9px 4px; }
+  .bp-tspace { width: 4px; height: auto; }
+
+  .bp-zoom { right: 8px; bottom: calc(72px + env(safe-area-inset-bottom)); padding: 3px; }
+  .bp-zoom .bp-icon[aria-label="Zoom out"], .bp-zoom .bp-icon[aria-label="Zoom in"] { display: none; }
+  .bp-zoom-val { min-width: 50px; height: 32px; }
+
+  .bp-ctx { max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
+  .bp-ctx::-webkit-scrollbar { display: none; }
+  .ctx-btn { flex: none; min-width: 38px; height: 38px; }
+  .ctx-font { max-width: 92px; }
+
+  .bp-panel { left: 8px; right: 8px; width: auto; top: calc(60px + env(safe-area-inset-top)); bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .bp-hud { bottom: calc(12px + env(safe-area-inset-bottom)); max-width: calc(100% - 16px); }
+  .hud-title { display: none; }
+  .ov-h::after { inset: calc(-12px * var(--iz)); }
+  .ov-qc::after { inset: calc(-14px * var(--iz)); }
+  .ov-pt::after { inset: calc(-12px * var(--iz)); }
+}

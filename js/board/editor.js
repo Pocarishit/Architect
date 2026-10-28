@@ -91,6 +91,7 @@ export class Editor {
     L(this.vp, 'pointercancel', (e) => this.onUp(e, true));
     L(this.vp, 'lostpointercapture', (e) => { if (this.g && this.g.pointerId === e.pointerId) this.onUp(e, true); });
     L(this.vp, 'dblclick', (e) => this.onDblClick(e));
+    L(this.vp, 'dragstart', (e) => e.preventDefault());
     L(this.vp, 'contextmenu', (e) => this.onContextMenu(e));
     L(this.vp, 'wheel', (e) => this.onWheel(e), { passive: false });
     L(this.vp, 'dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
@@ -301,6 +302,10 @@ export class Editor {
       const r = rectOf(el, this.byId);
       o.append(box(r, `ov-sel${el.locked ? ' is-locked' : ''}`));
       if (el.locked) { o.append(lockBadge(r)); return; }
+      if (this.activeId === el.id && !busy) {
+        // A playing video/embed takes every click, so it gets its own handle to move it by.
+        o.append(h('div', { class: 'ov-grip', 'data-handle': 'grip', title: 'Drag to move', style: { left: `${r.x}px`, top: `${r.y}px` } }, icon('hand', 13), h('span', {}, 'Move')));
+      }
       if (busy && g.type !== 'resize') return;
       if (this.editingId === el.id) return;
       const dirs = el.type === 'text' ? ['nw', 'ne', 'se', 'sw', 'e', 'w']
@@ -516,16 +521,19 @@ export class Editor {
     if (this.pointers.size > 1) return;
 
     if (this.editingId) this.finishEditing();
-    if (this.activeId && !e.target.closest(`[data-eid="${this.activeId}"]`)) this.deactivate();
+    if (this.activeId && !e.target.closest(`[data-eid="${this.activeId}"], [data-handle]`)) this.deactivate();
     if (document.activeElement !== this.vp && !isTypingTarget(document.activeElement)) this.vp.focus({ preventScroll: true });
     else if (isTypingTarget(document.activeElement)) { document.activeElement.blur(); this.vp.focus({ preventScroll: true }); }
 
     const p = this.toWorld(e.clientX, e.clientY);
     const start = { cx: e.clientX, cy: e.clientY, p, shift: e.shiftKey, alt: e.altKey, pointerId: e.pointerId, touch: e.pointerType === 'touch', link: e.target.closest('.el-txt a')?.href || null };
-    if (e.button !== 0 && e.button !== 1) { this.pointers.delete(e.pointerId); return; }
+    if (e.button > 2) { this.pointers.delete(e.pointerId); return; }
     try { this.vp.setPointerCapture(e.pointerId); } catch {}
 
+    // Right-drag pans the board; a right-click without dragging still opens the menu.
+    if (e.button === 2) { start.right = true; start.target = e.target; this.beginPan(start); return; }
     if (e.button === 1 || this.space || this.tool === 'hand' || this.presenting) { e.preventDefault(); this.beginPan(start); return; }
+    if (start.touch) this.armLongPress(start, e.target);
 
     const handle = e.target.closest('[data-handle]');
     const node = e.target.closest('[data-eid]');
@@ -546,6 +554,7 @@ export class Editor {
       const d = handle.dataset.handle;
       if (d.startsWith('qc-')) { this.beginAnchor(start, d.slice(3)); return; }
       if (d === 'a' || d === 'b') { this.beginEndpoint(start, d); return; }
+      if (d === 'grip') { this.beginMove(start); return; }
       this.beginResize(start, d);
       return;
     }
@@ -569,6 +578,7 @@ export class Editor {
     const p = this.toWorld(e.clientX, e.clientY);
     this.lastPointer = p;
     if (this.g?.type === 'pinch') { this.movePinch(); return; }
+    if (this._lp && Math.hypot(e.clientX - this._lp.cx, e.clientY - this._lp.cy) > 8) this.cancelLongPress();
     if (this.g && this.g.pointerId === e.pointerId) { this.g.onMove?.(p, e); return; }
     if (!this.g && this.tool === 'line') {
       const t = this.elementAt(p);
@@ -579,6 +589,7 @@ export class Editor {
 
   onUp(e, cancelled = false) {
     this.pointers.delete(e.pointerId);
+    this.cancelLongPress();
     const g = this.g;
     if (!g) return;
     if (g.type === 'pinch') { if (this.pointers.size < 2) { this.g = null; this.emit('gesture', false); } return; }
@@ -601,13 +612,44 @@ export class Editor {
     const cam0 = { ...this.cam };
     this.vp.classList.add('is-panning');
     cancelAnimationFrame(this._anim);
-    this.startGesture({
-      type: 'pan', pointerId: start.pointerId,
+    const g = {
+      type: 'pan', pointerId: start.pointerId, right: !!start.right, panned: false, pendingMenu: null,
       onMove: (p, e) => {
+        if (!g.panned && Math.hypot(e.clientX - start.cx, e.clientY - start.cy) > 4) g.panned = true;
         this.cam = { ...cam0, x: cam0.x + (e.clientX - start.cx), y: cam0.y + (e.clientY - start.cy) };
         this.applyCamera();
       },
-    });
+      onUp: () => {
+        if (!g.right) return;
+        if (g.panned) { this._rightPannedAt = performance.now(); return; }
+        if (g.pendingMenu) this.openContextMenu(g.pendingMenu); // macOS/Linux fire contextmenu on press
+      },
+    };
+    this.startGesture(g);
+  }
+
+  // Touch: hold still for half a second to open the menu.
+  armLongPress(start, target) {
+    this.cancelLongPress();
+    const lp = { cx: start.cx, cy: start.cy };
+    lp.timer = setTimeout(() => {
+      this._lp = null;
+      if (this.pointers.size !== 1) return;
+      const g = this.g;
+      if (g) {
+        this.g = null;
+        try { this.vp.releasePointerCapture(start.pointerId); } catch {}
+        this.vp.classList.remove('is-panning');
+        if (g.type === 'pan' || g.type === 'move') this.emit('gesture', false);
+      }
+      navigator.vibrate?.(12);
+      this.openContextMenu({ clientX: start.cx, clientY: start.cy, target });
+    }, 520);
+    this._lp = lp;
+  }
+
+  cancelLongPress() {
+    if (this._lp) { clearTimeout(this._lp.timer); this._lp = null; }
   }
 
   beginMarquee(start) {
@@ -966,6 +1008,14 @@ export class Editor {
     if (!target || target.closest('[contenteditable="true"]')) return;
     e.preventDefault();
     if (this.presenting) return;
+    if (this.g?.type === 'pan' && this.g.right) { this.g.pendingMenu = { clientX: e.clientX, clientY: e.clientY, target }; return; }
+    if (performance.now() - (this._rightPannedAt || 0) < 400) return; // Windows fires it after a right-drag
+    if (e.pointerType === 'touch' || e.sourceCapabilities?.firesTouchEvents) return; // long-press handles touch
+    this.openContextMenu({ clientX: e.clientX, clientY: e.clientY, target });
+  }
+
+  openContextMenu(e) {
+    const target = e.target;
     const node = target.closest('[data-eid]');
     const el = node ? this.byId.get(node.dataset.eid) : null;
     if (el && !this.sel.has(el.id)) this.select([el.id]);

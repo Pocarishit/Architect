@@ -193,7 +193,9 @@ export function mountBoard(root, boardId) {
     syncTools();
     syncHistory();
 
-    const flyOpts = { side: 'right', align: 'start', gap: 10 };
+    const flyOpts = window.matchMedia('(max-width: 720px)').matches
+      ? { side: 'top', align: 'start', gap: 10 }
+      : { side: 'right', align: 'start', gap: 10 };
     function shapeFly(anchor) {
       const grid = h('div', { class: 'shape-grid' });
       const paint = () => grid.replaceChildren(...SHAPES.map((k) => h('button', {

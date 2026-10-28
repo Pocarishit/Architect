@@ -2,6 +2,7 @@ import { h, delegate } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { menu, toast, promptDialog, confirmDialog } from '../core/ui.js';
 import { uid, posBetween, fmtDate } from '../core/util.js';
+import { go } from '../core/router.js';
 import { api, friendlyError } from '../data/api.js';
 
 export const DEFAULT_PATHS = ['Morning', 'Afternoon', 'Atemporal', 'Futures', 'Cache'];
@@ -19,7 +20,7 @@ function isNow(title) {
 
 let seeding = null;
 
-export function mountPaths(root) {
+export function mountPaths(root, initialOpen = null) {
   let columns = [];
   let tasks = [];
   let loading = true;
@@ -29,6 +30,12 @@ export function mountPaths(root) {
   let renamingCol = null;      // column id being renamed inline
   let suppressClick = false;
   let drag = null;
+  let openCol = initialOpen;   // mobile: the path being viewed (null = tile grid)
+  let openedFromGrid = false;
+  const mq = window.matchMedia('(max-width: 720px)');
+  const isMobile = () => mq.matches;
+  const onMq = () => render();
+  mq.addEventListener?.('change', onMq);
 
   const el = h('div', { class: 'view paths' });
   root.append(el);
@@ -78,8 +85,10 @@ export function mountPaths(root) {
     pendingRender = false;
     const scroller = el.querySelector('.pboard');
     const scrollLeft = scroller ? scroller.scrollLeft : 0;
+    const detail = mobileDetailCol();
+    el.classList.toggle('is-mobile-detail', !!detail);
     rendering = true;
-    try { el.replaceChildren(header(), body()); } finally { rendering = false; }
+    try { el.replaceChildren(...(detail ? [detailHeader(detail), detailBody(detail)] : [header(), body()])); } finally { rendering = false; }
     const next = el.querySelector('.pboard');
     if (next) next.scrollLeft = scrollLeft;
     focusActive();
@@ -99,7 +108,65 @@ export function mountPaths(root) {
         h('span', { class: 'meter-count' }, `${done}/${total}`)));
   }
 
+  function mobileDetailCol() {
+    if (!isMobile() || !openCol || loading || loadError) return null;
+    return columns.find((c) => c.id === openCol) || null;
+  }
+
+  function openPath(id) { openedFromGrid = true; go(`paths/${id}`); }
+  function closePath() {
+    if (openedFromGrid) { openedFromGrid = false; history.back(); }
+    else go('paths');
+  }
+
+  // Mobile: a grid of path tiles, like app icons.
+  function tiles() {
+    return h('div', { class: 'ptiles' },
+      columns.map((col) => {
+        const list = tasksOf(col.id);
+        const done = list.filter((t) => t.done).length;
+        const left = list.length - done;
+        const now = isNow(col.title);
+        return h('button', { class: ['ptile', now && 'is-now'], type: 'button', 'data-act': 'open-col', 'data-col': col.id, 'aria-label': `${col.title}, ${left} to do` },
+          h('div', { class: 'ptile-top' },
+            h('span', { class: 'ptile-count' }, String(left)),
+            now ? h('span', { class: 'now-tag' }, h('i'), 'Now') : null),
+          h('div', { class: 'ptile-bottom' },
+            list.length ? h('div', { class: 'ptile-dots', 'aria-hidden': 'true' }, list.slice(0, 18).map((t) => h('i', { class: t.done ? 'on' : null }))) : null,
+            h('span', { class: 'ptile-name' }, col.title)));
+      }),
+      h('button', { class: 'ptile is-new', type: 'button', 'data-act': 'new-col' }, icon('plus', 22), h('span', { class: 'ptile-name' }, 'New path')));
+  }
+
+  function detailHeader(col) {
+    const list = tasksOf(col.id);
+    const done = list.filter((t) => t.done).length;
+    const renaming = renamingCol === col.id;
+    return h('header', { class: 'pdetail-head', 'data-col': col.id },
+      h('div', { class: 'pdetail-bar' },
+        h('button', { class: 'pback', type: 'button', 'data-act': 'close-col' }, icon('back', 16), 'Paths'),
+        h('button', { class: 'icon-btn', type: 'button', 'data-act': 'col-menu', 'aria-label': `${col.title} options` }, icon('more', 18))),
+      renaming
+        ? h('input', { class: 'pcol-rename pdetail-rename', value: col.title, maxlength: 40, 'data-rename': col.id, 'aria-label': 'Path name' })
+        : h('h1', { class: 'dot-title pdetail-title' }, col.title),
+      h('div', { class: 'paths-meta' },
+        isNow(col.title) ? h('span', { class: 'now-tag' }, h('i'), 'Now') : null,
+        h('span', { class: 'label' }, list.length ? `${list.length - done} to do` : 'Empty'),
+        h('span', { class: 'meter-count' }, `${done}/${list.length}`)));
+  }
+
+  function detailBody(col) {
+    return h('section', { class: 'pcol is-full', 'data-col': col.id, 'aria-label': col.title },
+      h('div', { class: 'pcol-list', 'data-list': col.id },
+        tasksOf(col.id).map(taskView),
+        composerFor === col.id ? composerView(col) : null),
+      composerFor !== col.id
+        ? h('button', { class: 'pcol-add', 'data-act': 'add-task' }, icon('plus', 16), h('span', {}, 'Add task'))
+        : null);
+  }
+
   function body() {
+    if (!loading && !loadError && isMobile()) return tiles();
     if (loading) return h('div', { class: 'empty' }, h('span', { class: 'dots-loader' }, h('i'), h('i'), h('i')));
     if (loadError) return h('div', { class: 'empty' }, h('p', { class: 'empty-text' }, loadError), h('button', { class: 'btn', onclick: () => { loading = true; loadError = null; render(); load(); } }, 'Try again'));
     return h('div', { class: 'pboard' },
@@ -269,6 +336,7 @@ export function mountPaths(root) {
     if (!ok) return;
     const ids = tasksOf(col.id).map((t) => t.id);
     columns = columns.filter((c) => c.id !== col.id);
+    if (openCol === col.id) { openCol = null; if (isMobile()) go('paths'); }
     tasks = tasks.filter((t) => t.column_id !== col.id);
     render();
     try {
@@ -295,6 +363,8 @@ export function mountPaths(root) {
     else if (act === 'new-col') addColumn();
     else if (act === 'task-menu' && task) taskMenu(t, task);
     else if (act === 'col-menu' && col) colMenu(t, col);
+    else if (act === 'open-col' && col) openPath(col.id);
+    else if (act === 'close-col') closePath();
   }));
 
   offs.push(delegate(el, 'dblclick', '[data-act="rename-col"]', (e, t) => {
@@ -483,7 +553,14 @@ export function mountPaths(root) {
   load();
 
   return {
+    update(r) {
+      openCol = r.id || null;
+      composerFor = null; editing = null; renamingCol = null;
+      render();
+      window.scrollTo(0, 0);
+    },
     destroy() {
+      mq.removeEventListener?.('change', onMq);
       clearInterval(nowTimer);
       offs.forEach((f) => f());
       document.removeEventListener('pointerdown', onDocDown, true);

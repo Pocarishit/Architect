@@ -144,7 +144,11 @@ export function updateNode(node, el, ctx) {
       place(node, el);
       const url = safeMedia(ctx.mediaUrl(el));
       if (url) {
-        if (!node._img) { node._img = h('img', { draggable: 'false', alt: el.alt || '' }); node.replaceChildren(node._img); }
+        if (!node._img) {
+          node._img = h('img', { alt: el.alt || '' });
+          node._img.setAttribute('draggable', 'false');
+          node.replaceChildren(node._img);
+        }
         if (node._img.getAttribute('src') !== url) node._img.setAttribute('src', url);
       } else {
         node._img = null;

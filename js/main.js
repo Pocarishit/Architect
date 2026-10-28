@@ -12,11 +12,13 @@ let session = null;
 let shell = null;
 let view = null;
 let login = null;
+let viewName = null;
 
 function teardownView() {
   closeFloating();
   try { view?.destroy?.(); } catch (e) { console.error(e); }
   view = null;
+  viewName = null;
 }
 
 function render() {
@@ -46,12 +48,15 @@ function route() {
   if (!session || !shell) return;
   const r = parseRoute();
   if (r.redirect) { history.replaceState(null, '', '#/paths'); }
+  // Same view, different sub-page (e.g. a path opened on mobile): update in place, no reload.
+  if (view?.update && viewName === r.view) { view.update(r); return; }
   teardownView();
+  viewName = r.view;
   shell.outlet.replaceChildren();
   shell.setActive(r.view);
   document.body.classList.toggle('is-board', r.view === 'board');
   window.scrollTo(0, 0);
-  if (r.view === 'paths') view = mountPaths(shell.outlet);
+  if (r.view === 'paths') view = mountPaths(shell.outlet, r.id);
   else if (r.view === 'blueprint') view = mountArchive(shell.outlet, r.id);
   else if (r.view === 'board') view = mountBoard(shell.outlet, r.id);
 }
